@@ -1,0 +1,17 @@
+# Python sync agent (runs locally, not needed in Vercel)
+sync_to_anki.py
+requirements.txt
+__pycache__/
+*.py[cod]
+venv/
+env/
+ENV/
+
+# Supabase migrations (not needed in deployment)
+supabase/
+
+# Local development files
+.env
+.env.local
+.env*.local
+

@@ -9,9 +9,9 @@ Mobile Browser → Next.js API (Vercel) → Supabase Postgres
                                               ↓
                                     Python Sync Agent
                                               ↓
-                                    AnkiConnect (localhost)
+                                    CSV Import File
                                               ↓
-                                          Anki Desktop
+                                    Anki Desktop (native import)
 ```
 
 ## Features
@@ -29,8 +29,7 @@ Mobile Browser → Next.js API (Vercel) → Supabase Postgres
 2. **Vercel Account** - For hosting the Next.js app
 3. **OpenAI API Key** - For fetching word definitions
 4. **Anki Desktop** - Installed on your computer
-5. **AnkiConnect** - Anki add-on for API access
-6. **Python 3.8+** - For running the sync agent
+5. **Python 3.8+** - For running the sync agent
 
 ## Setup
 
@@ -63,15 +62,13 @@ Mobile Browser → Next.js API (Vercel) → Supabase Postgres
 ### 2. Anki Setup
 
 1. Install Anki Desktop if you haven't already
-2. Install AnkiConnect add-on:
-   - Tools → Add-ons → Get Add-ons
-   - Enter code: `2055492159`
-   - Restart Anki
-3. Create the note type (if it doesn't exist):
+2. Create the note type (if it doesn't exist):
    - Tools → Manage Note Types → Add → Add: Basic
    - Name it: `WordDefinition`
    - Ensure it has fields: `Front` and `Back`
-4. Ensure you have a deck named `Main` (or create one)
+3. Ensure you have a deck named `Main` (or create one)
+
+**Note:** This app uses Anki's native CSV import functionality - no third-party add-ons required!
 
 ### 3. Vercel Deployment
 
@@ -124,8 +121,10 @@ Mobile Browser → Next.js API (Vercel) → Supabase Postgres
    ```
    SUPABASE_URL=https://your-project.supabase.co
    SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-   ANKI_CONNECT_URL=http://localhost:8765
+   ANKI_IMPORT_DIR=~/anki_imports
    ```
+   
+   The `ANKI_IMPORT_DIR` is optional - it specifies where to save the CSV import files (default: `~/anki_imports`)
 
 3. Make the script executable (optional):
    ```bash
@@ -143,9 +142,7 @@ Mobile Browser → Next.js API (Vercel) → Supabase Postgres
 
 ### Syncing to Anki
 
-1. Open Anki Desktop on your computer
-2. Ensure AnkiConnect is running (it starts automatically with Anki)
-3. Run the sync agent:
+1. Run the sync agent to generate an import file:
    ```bash
    python sync_to_anki.py
    ```
@@ -155,15 +152,31 @@ Mobile Browser → Next.js API (Vercel) → Supabase Postgres
    # Process only 10 items
    python sync_to_anki.py --limit 10
    
-   # Dry run (no changes)
+   # Dry run (see what would be exported)
    python sync_to_anki.py --dry-run
+   
+   # Specify custom output file
+   python sync_to_anki.py --output ~/Desktop/anki_words.csv
    ```
 
-4. The script will:
+2. The script will:
    - Fetch all unpushed words from Supabase
-   - Check for duplicates in Anki
-   - Add new notes to the `Main` deck
-   - Update the queue status
+   - Generate a CSV import file (saved to `~/anki_imports/` by default)
+   - Mark items as pushed in the database
+   - Print import instructions
+
+3. Import into Anki:
+   - Open Anki Desktop
+   - Go to **File → Import**
+   - Select the generated CSV file (e.g., `~/anki_imports/anki_import_20240101_120000.csv`)
+   - Configure import settings:
+     - **Type:** `WordDefinition`
+     - **Deck:** `Main`
+     - **Fields separated by:** Comma
+     - **Allow HTML in fields:** No (definitions are plain text)
+     - **Update existing notes:** No (or Yes if you want to update existing cards)
+   - Click **Import**
+   - Anki will automatically handle duplicates during import
 
 ## Environment Variables
 
@@ -179,7 +192,7 @@ Mobile Browser → Next.js API (Vercel) → Supabase Postgres
 
 - `SUPABASE_URL` - Supabase project URL
 - `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key
-- `ANKI_CONNECT_URL` - AnkiConnect URL (default: `http://localhost:8765`)
+- `ANKI_IMPORT_DIR` - Directory to save CSV import files (optional, default: `~/anki_imports`)
 
 ## Security
 
@@ -189,20 +202,20 @@ Mobile Browser → Next.js API (Vercel) → Supabase Postgres
 
 ## Troubleshooting
 
-### "AnkiConnect is not reachable"
-- Make sure Anki Desktop is open
-- Verify AnkiConnect add-on is installed and enabled
-- Check that AnkiConnect is running (should be automatic)
+### "Import file not found"
+- Check the output directory (default: `~/anki_imports`)
+- Use `--output` flag to specify a custom location
+- Make sure the directory is writable
 
 ### "Failed to fetch definition"
 - Check your OpenAI API key is valid
 - Verify you have API credits
 - Check the `resolution_error` field in Supabase for details
 
-### "Duplicate found" but word doesn't exist in Anki
-- The sync agent checks for duplicates using AnkiConnect's search
-- If the search is too broad, it might match similar words
-- Check the Anki database directly if needed
+### "Duplicate notes during import"
+- Anki's built-in import will detect duplicates automatically
+- You can choose to update existing notes or skip them during import
+- The sync agent deduplicates within the generated CSV file
 
 ### Words not syncing
 - Verify the sync agent can connect to Supabase (check env vars)

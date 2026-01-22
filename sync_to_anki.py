@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-Sync agent that fetches queued words from Supabase and adds them to Anki via AnkiConnect.
+Sync agent that fetches queued words from Supabase and generates Anki import files.
+No third-party add-ons required - uses Anki's native CSV import functionality.
 """
 
 import os
 import sys
 import argparse
-import json
+import csv
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from pathlib import Path
+from typing import Optional, Dict, Any, List, Set
 
 try:
-    import requests
     from supabase import create_client, Client
     from dotenv import load_dotenv
 except ImportError as e:
@@ -25,143 +26,11 @@ load_dotenv()
 # Configuration
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
-ANKI_CONNECT_URL = os.getenv('ANKI_CONNECT_URL', 'http://localhost:8765')
+OUTPUT_DIR = os.getenv('ANKI_IMPORT_DIR', os.path.expanduser('~/anki_imports'))
 
 REQUIRED_TAGS = ['dom_words', 'lang_en', 'time_permanent', 'type_definition']
 DEFAULT_DECK = 'Main'
 DEFAULT_NOTE_TYPE = 'WordDefinition'
-
-
-def check_anki_connect() -> bool:
-    """Check if AnkiConnect is reachable."""
-    try:
-        response = requests.post(
-            ANKI_CONNECT_URL,
-            json={
-                'action': 'version',
-                'version': 6,
-            },
-            timeout=5
-        )
-        return response.status_code == 200
-    except Exception as e:
-        print(f"Error connecting to AnkiConnect at {ANKI_CONNECT_URL}: {e}")
-        return False
-
-
-def find_duplicate_note(anki_connect_url: str, word: str, note_type: str) -> Optional[int]:
-    """
-    Check if a note with the same word already exists in Anki.
-    Returns the note ID if found, None otherwise.
-    """
-    try:
-        # Normalize word for search (lowercase)
-        normalized_word = word.lower().strip()
-        
-        # Search for notes with matching Front field
-        # Query format: note:"WordDefinition" "Front:bewildered"
-        query = f'note:"{note_type}" "Front:{normalized_word}"'
-        
-        response = requests.post(
-            anki_connect_url,
-            json={
-                'action': 'findNotes',
-                'version': 6,
-                'params': {
-                    'query': query
-                }
-            },
-            timeout=10
-        )
-        
-        if response.status_code != 200:
-            return None
-        
-        result = response.json()
-        if result.get('error') is not None:
-            print(f"  Warning: AnkiConnect findNotes error: {result['error']}")
-            return None
-        
-        note_ids = result.get('result', [])
-        
-        if not note_ids:
-            return None
-        
-        # If we found notes, verify they actually match by checking the Front field
-        # Get note info to verify
-        if len(note_ids) > 0:
-            # Check the first note's Front field
-            notes_info_response = requests.post(
-                anki_connect_url,
-                json={
-                    'action': 'notesInfo',
-                    'version': 6,
-                    'params': {
-                        'notes': note_ids[:1]  # Just check first one
-                    }
-                },
-                timeout=10
-            )
-            
-            if notes_info_response.status_code == 200:
-                notes_info = notes_info_response.json()
-                if notes_info.get('error') is None and notes_info.get('result'):
-                    note_info = notes_info['result'][0]
-                    front_field = note_info.get('fields', {}).get('Front', {}).get('value', '')
-                    if front_field.lower().strip() == normalized_word:
-                        return note_ids[0]
-        
-        return None
-    except Exception as e:
-        print(f"  Error checking for duplicate: {e}")
-        return None
-
-
-def add_note_to_anki(
-    anki_connect_url: str,
-    word: str,
-    definition: str,
-    deck: str,
-    note_type: str,
-    tags: List[str]
-) -> Optional[int]:
-    """
-    Add a note to Anki via AnkiConnect.
-    Returns the note ID if successful, None otherwise.
-    """
-    try:
-        response = requests.post(
-            anki_connect_url,
-            json={
-                'action': 'addNote',
-                'version': 6,
-                'params': {
-                    'note': {
-                        'deckName': deck,
-                        'modelName': note_type,
-                        'fields': {
-                            'Front': word,
-                            'Back': definition
-                        },
-                        'tags': tags
-                    }
-                }
-            },
-            timeout=10
-        )
-        
-        if response.status_code != 200:
-            return None
-        
-        result = response.json()
-        if result.get('error') is not None:
-            print(f"  Error from AnkiConnect: {result['error']}")
-            return None
-        
-        return result.get('result')
-    except Exception as e:
-        print(f"  Error adding note: {e}")
-        return None
 
 
 def update_queue_status(
@@ -185,19 +54,82 @@ def update_queue_status(
         print(f"  Error updating queue status: {e}")
 
 
-def sync_to_anki(limit: Optional[int] = None, dry_run: bool = False):
+def format_tags(tags: List[str]) -> str:
+    """Format tags list as space-separated string for Anki CSV import."""
+    return ' '.join(tags)
+
+
+def escape_csv_field(field: str) -> str:
+    """Escape CSV field if it contains commas, quotes, or newlines."""
+    if not field:
+        return ''
+    # Replace newlines with spaces
+    field = field.replace('\n', ' ').replace('\r', ' ')
+    # If field contains comma, quote, or newline, wrap in quotes and escape quotes
+    if ',' in field or '"' in field:
+        field = field.replace('"', '""')
+        field = f'"{field}"'
+    return field
+
+
+def generate_anki_import_file(
+    items: List[Dict[str, Any]],
+    output_path: Path,
+    deck: str = DEFAULT_DECK
+) -> int:
+    """
+    Generate an Anki-compatible CSV import file.
+    Format: Front, Back, Tags
+    Returns the number of items written.
+    """
+    written_count = 0
+    
+    with open(output_path, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        
+        # Write header (Anki doesn't require it, but it's helpful)
+        # Note: Anki import expects: Front, Back, Tags (or just Front, Back)
+        writer.writerow(['Front', 'Back', 'Tags'])
+        
+        # Track words we've already written (for deduplication within the file)
+        seen_words: Set[str] = set()
+        
+        for item in items:
+            word = item['word']
+            definition = item.get('definition', '')
+            tags = item.get('tags', REQUIRED_TAGS)
+            
+            # Normalize word for duplicate checking
+            normalized_word = word.lower().strip()
+            
+            # Skip if we've already written this word in this file
+            if normalized_word in seen_words:
+                print(f"  ⚠ Skipping duplicate in file: {word}")
+                continue
+            
+            # Skip if definition is missing
+            if not definition:
+                print(f"  ⚠ Skipping {word}: missing definition")
+                continue
+            
+            # Write the row
+            front = escape_csv_field(word)
+            back = escape_csv_field(definition)
+            tags_str = format_tags(tags)
+            
+            writer.writerow([front, back, tags_str])
+            seen_words.add(normalized_word)
+            written_count += 1
+    
+    return written_count
+
+
+def sync_to_anki(limit: Optional[int] = None, dry_run: bool = False, output_file: Optional[str] = None):
     """Main sync function."""
     # Validate configuration
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         print("Error: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set")
         sys.exit(1)
-    
-    # Check AnkiConnect
-    print(f"Checking AnkiConnect at {ANKI_CONNECT_URL}...")
-    if not check_anki_connect():
-        print("Error: AnkiConnect is not reachable. Make sure Anki is open and AnkiConnect is installed.")
-        sys.exit(1)
-    print("✓ AnkiConnect is reachable")
     
     # Connect to Supabase
     print("Connecting to Supabase...")
@@ -221,63 +153,108 @@ def sync_to_anki(limit: Optional[int] = None, dry_run: bool = False):
     
     if dry_run:
         print("\n[DRY RUN MODE - No changes will be made]\n")
+        for item in items:
+            word = item['word']
+            definition = item.get('definition', '')
+            tags = item.get('tags', REQUIRED_TAGS)
+            print(f"  Would export: {word} - {definition[:50] if definition else 'NO DEFINITION'}...")
+        return
     
-    # Process each item
+    # Create output directory if it doesn't exist
+    output_dir = Path(OUTPUT_DIR)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate output filename
+    if output_file:
+        output_path = Path(output_file)
+    else:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_path = output_dir / f'anki_import_{timestamp}.csv'
+    
+    print(f"\nGenerating import file: {output_path}")
+    
+    # Filter out items without definitions
+    valid_items = []
+    skipped_items = []
+    
     for item in items:
-        queue_id = item['id']
-        word = item['word']
-        definition = item['definition']
-        deck = item.get('deck', DEFAULT_DECK)
-        note_type = item.get('note_type', DEFAULT_NOTE_TYPE)
-        tags = item.get('tags', REQUIRED_TAGS)
-        
-        print(f"\nProcessing: {word} (ID: {queue_id})")
-        
-        # Check if definition exists
-        if not definition:
-            error_msg = "missing definition"
-            print(f"  ⚠ Skipping: {error_msg}")
-            if not dry_run:
-                update_queue_status(supabase, queue_id, False, error_msg)
+        if not item.get('definition'):
+            skipped_items.append(item)
             continue
-        
-        # Check for duplicate
-        duplicate_note_id = find_duplicate_note(ANKI_CONNECT_URL, word, note_type)
-        if duplicate_note_id:
-            print(f"  ✓ Duplicate found (note ID: {duplicate_note_id}), marking as pushed")
-            if not dry_run:
-                update_queue_status(supabase, queue_id, True)
-            continue
-        
-        # Add note to Anki
-        print(f"  Adding note to Anki...")
-        if dry_run:
-            print(f"    [DRY RUN] Would add: Front='{word}', Back='{definition[:50]}...', Deck='{deck}', Tags={tags}")
-            continue
-        
-        note_id = add_note_to_anki(ANKI_CONNECT_URL, word, definition, deck, note_type, tags)
-        
-        if note_id:
-            print(f"  ✓ Added successfully (note ID: {note_id})")
-            update_queue_status(supabase, queue_id, True)
-        else:
-            error_msg = "Failed to add note to Anki"
-            print(f"  ✗ {error_msg}")
-            update_queue_status(supabase, queue_id, False, error_msg)
+        valid_items.append(item)
     
+    if skipped_items:
+        print(f"\n⚠ Skipping {len(skipped_items)} item(s) without definitions:")
+        for item in skipped_items:
+            print(f"  - {item['word']} (ID: {item['id']})")
+            update_queue_status(supabase, item['id'], False, "missing definition")
+    
+    if not valid_items:
+        print("\nNo items with definitions to export.")
+        return
+    
+    # Generate the CSV file
+    written_count = generate_anki_import_file(valid_items, output_path)
+    
+    if written_count == 0:
+        print("\n⚠ No items were written to the file (all duplicates or invalid).")
+        return
+    
+    print(f"\n✓ Generated import file with {written_count} note(s)")
+    print(f"  File: {output_path}")
+    
+    # Mark items as pushed
+    print("\nMarking items as pushed in database...")
+    for item in valid_items:
+        update_queue_status(supabase, item['id'], True)
+    
+    print(f"\n✓ Marked {len(valid_items)} item(s) as pushed")
+    
+    # Print import instructions
+    print("\n" + "="*60)
+    print("IMPORT INSTRUCTIONS:")
+    print("="*60)
+    print(f"1. Open Anki Desktop")
+    print(f"2. Go to File → Import")
+    print(f"3. Select the file: {output_path}")
+    print(f"4. Configure import settings:")
+    print(f"   - Type: {DEFAULT_NOTE_TYPE}")
+    print(f"   - Deck: {DEFAULT_DECK}")
+    print(f"   - Fields separated by: Comma")
+    print(f"   - Allow HTML in fields: No (if definitions are plain text)")
+    print(f"   - Update existing notes: No (or Yes if you want to update)")
+    print(f"5. Click Import")
+    print("="*60)
     print("\n✓ Sync complete")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Sync queued words from Supabase to Anki')
+    parser = argparse.ArgumentParser(
+        description='Sync queued words from Supabase and generate Anki import file',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Generate import file with all unpushed items
+  python sync_to_anki.py
+  
+  # Generate import file with only 10 items
+  python sync_to_anki.py --limit 10
+  
+  # Dry run (see what would be exported)
+  python sync_to_anki.py --dry-run
+  
+  # Specify custom output file
+  python sync_to_anki.py --output ~/Desktop/anki_words.csv
+        """
+    )
     parser.add_argument('--limit', type=int, help='Limit number of items to process')
     parser.add_argument('--dry-run', action='store_true', help='Dry run mode (no changes)')
+    parser.add_argument('--output', type=str, help='Output CSV file path (default: ~/anki_imports/anki_import_TIMESTAMP.csv)')
     
     args = parser.parse_args()
     
-    sync_to_anki(limit=args.limit, dry_run=args.dry_run)
+    sync_to_anki(limit=args.limit, dry_run=args.dry_run, output_file=args.output)
 
 
 if __name__ == '__main__':
     main()
-

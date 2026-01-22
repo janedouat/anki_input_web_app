@@ -11,8 +11,26 @@ interface QueueItem {
   resolution_error: string | null
 }
 
+const COMMON_LANGUAGES = [
+  { code: 'en', name: 'English', flag: '🇬🇧' },
+  { code: 'fr', name: 'French', flag: '🇫🇷' },
+]
+
+const OTHER_LANGUAGES = [
+  { code: 'es', name: 'Spanish', flag: '🇪🇸' },
+  { code: 'de', name: 'German', flag: '🇩🇪' },
+  { code: 'it', name: 'Italian', flag: '🇮🇹' },
+  { code: 'pt', name: 'Portuguese', flag: '🇵🇹' },
+  { code: 'ru', name: 'Russian', flag: '🇷🇺' },
+  { code: 'ja', name: 'Japanese', flag: '🇯🇵' },
+  { code: 'zh', name: 'Chinese', flag: '🇨🇳' },
+  { code: 'ar', name: 'Arabic', flag: '🇸🇦' },
+]
+
 export default function Home() {
   const [word, setWord] = useState('')
+  const [language, setLanguage] = useState('en')
+  const [showOtherLanguages, setShowOtherLanguages] = useState(false)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [recentItems, setRecentItems] = useState<QueueItem[]>([])
@@ -61,7 +79,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ word: word.trim() }),
+        body: JSON.stringify({ word: word.trim(), language }),
       })
 
       const data = await response.json()
@@ -75,7 +93,16 @@ export default function Home() {
       if (data.status === 'already_queued') {
         setMessage({ type: 'success', text: 'Already queued' })
       } else {
-        setMessage({ type: 'success', text: 'Queued!' })
+        // Check if definition was fetched
+        if (!data.definition && data.resolution_error) {
+          // Word queued but definition failed
+          const errorMsg = data.resolution_error.includes('quota') 
+            ? 'Queued! (Definition unavailable - OpenAI quota exceeded)'
+            : 'Queued! (Definition unavailable - will be added later)'
+          setMessage({ type: 'success', text: errorMsg })
+        } else {
+          setMessage({ type: 'success', text: 'Queued!' })
+        }
       }
 
       // Clear input
@@ -93,16 +120,75 @@ export default function Home() {
 
   return (
     <main style={styles.container}>
-      <h1 style={styles.title}>Add word</h1>
+      <h1 style={styles.title}>Add word or phrase</h1>
       
       <form onSubmit={handleSubmit} style={styles.form}>
+        <div style={styles.languageSelector}>
+          <div style={styles.quickLanguages}>
+            {COMMON_LANGUAGES.map((lang) => (
+              <button
+                key={lang.code}
+                type="button"
+                onClick={() => {
+                  setLanguage(lang.code)
+                  setShowOtherLanguages(false)
+                }}
+                style={{
+                  ...styles.languageButton,
+                  ...(language === lang.code ? styles.languageButtonActive : {}),
+                }}
+              >
+                {lang.flag} {lang.name}
+              </button>
+            ))}
+          </div>
+          
+          {!showOtherLanguages ? (
+            <button
+              type="button"
+              onClick={() => setShowOtherLanguages(true)}
+              style={styles.otherLanguagesButton}
+            >
+              Other languages ▼
+            </button>
+          ) : (
+            <div style={styles.otherLanguagesContainer}>
+              <div style={styles.otherLanguagesGrid}>
+                {OTHER_LANGUAGES.map((lang) => (
+                  <button
+                    key={lang.code}
+                    type="button"
+                    onClick={() => {
+                      setLanguage(lang.code)
+                      setShowOtherLanguages(false)
+                    }}
+                    style={{
+                      ...styles.languageButton,
+                      ...(language === lang.code ? styles.languageButtonActive : {}),
+                    }}
+                  >
+                    {lang.flag} {lang.name}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowOtherLanguages(false)}
+                style={styles.otherLanguagesButton}
+              >
+                Hide ▲
+              </button>
+            </div>
+          )}
+        </div>
+
         <input
           ref={inputRef}
           type="text"
           value={word}
           onChange={(e) => setWord(e.target.value)}
-          placeholder="Enter a word"
-          maxLength={64}
+          placeholder="Enter a word or expression"
+          maxLength={200}
           disabled={loading}
           style={styles.input}
           autoComplete="off"
@@ -280,6 +366,48 @@ const styles: { [key: string]: React.CSSProperties } = {
     textAlign: 'center',
     color: '#999',
     padding: '20px',
+  },
+  languageSelector: {
+    marginBottom: '15px',
+  },
+  quickLanguages: {
+    display: 'flex',
+    gap: '10px',
+    marginBottom: '10px',
+  },
+  languageButton: {
+    padding: '10px 16px',
+    fontSize: '14px',
+    fontWeight: '500',
+    backgroundColor: '#f5f5f5',
+    border: '2px solid #e0e0e0',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    minHeight: '44px', // Large touch target
+  },
+  languageButtonActive: {
+    backgroundColor: '#0070f3',
+    color: 'white',
+    borderColor: '#0070f3',
+  },
+  otherLanguagesButton: {
+    padding: '8px 12px',
+    fontSize: '12px',
+    backgroundColor: 'transparent',
+    border: '1px solid #ddd',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    color: '#666',
+  },
+  otherLanguagesContainer: {
+    marginTop: '10px',
+  },
+  otherLanguagesGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, 1fr)',
+    gap: '8px',
+    marginBottom: '10px',
   },
 }
 

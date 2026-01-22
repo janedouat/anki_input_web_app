@@ -2,6 +2,12 @@
 
 A phone-first web app that lets you queue English words for Anki flashcards. Words are stored in the cloud and automatically synced to your local Anki collection when you run the sync agent on your computer.
 
+## Written by Jane for Jane
+
+Web app hosted on Vercel that stores inputed words/sayings and their definition fetched from openAI's API.
+These can be inputed to Anki by running `cd /Users/janedouat/Documents/PERSO/PROJECTS/anki_input_web_app && python3 sync_to_anki.py`. Then this can be imported to Anki using the **import** feature.
+Dry run to see what would be exported is `cd /Users/janedouat/Documents/PERSO/PROJECTS/anki_input_web_app && python3 sync_to_anki.py --dry-run`.
+
 ## Architecture
 
 ```
@@ -121,10 +127,10 @@ Mobile Browser → Next.js API (Vercel) → Supabase Postgres
    ```
    SUPABASE_URL=https://your-project.supabase.co
    SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-   ANKI_IMPORT_DIR=~/anki_imports
+   ANKI_IMPORT_DIR=~/Downloads
    ```
-   
-   The `ANKI_IMPORT_DIR` is optional - it specifies where to save the CSV import files (default: `~/anki_imports`)
+
+   The `ANKI_IMPORT_DIR` is optional - it specifies where to save the CSV import files (default: `~/Downloads`)
 
 3. Make the script executable (optional):
    ```bash
@@ -161,14 +167,14 @@ Mobile Browser → Next.js API (Vercel) → Supabase Postgres
 
 2. The script will:
    - Fetch all unpushed words from Supabase
-   - Generate a CSV import file (saved to `~/anki_imports/` by default)
+   - Generate a CSV import file (saved to `~/Downloads/` by default)
    - Mark items as pushed in the database
    - Print import instructions
 
 3. Import into Anki:
    - Open Anki Desktop
    - Go to **File → Import**
-   - Select the generated CSV file (e.g., `~/anki_imports/anki_import_20240101_120000.csv`)
+   - Select the generated CSV file (e.g., `~/Downloads/anki_import_20240101_120000.csv`)
    - Configure import settings:
      - **Type:** `WordDefinition`
      - **Deck:** `Main`
@@ -192,7 +198,7 @@ Mobile Browser → Next.js API (Vercel) → Supabase Postgres
 
 - `SUPABASE_URL` - Supabase project URL
 - `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key
-- `ANKI_IMPORT_DIR` - Directory to save CSV import files (optional, default: `~/anki_imports`)
+- `ANKI_IMPORT_DIR` - Directory to save CSV import files (optional, default: `~/Downloads`)
 
 ## Security
 
@@ -203,7 +209,7 @@ Mobile Browser → Next.js API (Vercel) → Supabase Postgres
 ## Troubleshooting
 
 ### "Import file not found"
-- Check the output directory (default: `~/anki_imports`)
+- Check the output directory (default: `~/Downloads`)
 - Use `--output` flag to specify a custom location
 - Make sure the directory is writable
 

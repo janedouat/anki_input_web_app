@@ -1,8 +1,8 @@
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Add word to Anki',
-  description: 'Queue words for Anki flashcards',
+  title: 'Add word or phrase to Anki',
+  description: 'Queue words and expressions for Anki flashcards',
   manifest: '/manifest.json',
   viewport: 'width=device-width, initial-scale=1, maximum-scale=1',
 }

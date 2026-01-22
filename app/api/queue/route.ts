@@ -2,9 +2,28 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getWordDefinition } from '@/lib/openai'
 
-const REQUIRED_TAGS = ['dom_words', 'lang_en', 'time_permanent', 'type_definition']
 const DEFAULT_DECK = 'Main'
 const DEFAULT_NOTE_TYPE = 'WordDefinition'
+const DEFAULT_LANGUAGE = 'en'
+
+// Language code to tag mapping
+const LANGUAGE_TAG_MAP: Record<string, string> = {
+  'en': 'lang_en',
+  'fr': 'lang_fr',
+  'es': 'lang_es',
+  'de': 'lang_de',
+  'it': 'lang_it',
+  'pt': 'lang_pt',
+  'ru': 'lang_ru',
+  'ja': 'lang_ja',
+  'zh': 'lang_zh',
+  'ar': 'lang_ar',
+}
+
+function getRequiredTags(language: string): string[] {
+  const langTag = LANGUAGE_TAG_MAP[language] || `lang_${language}`
+  return ['dom_words', langTag, 'time_permanent', 'type_definition']
+}
 
 function validateToken(request: NextRequest): boolean {
   const authHeader = request.headers.get('authorization')
@@ -33,21 +52,18 @@ function validateWord(word: string): { valid: boolean; error?: string } {
   const trimmed = word.trim()
   
   if (trimmed.length === 0) {
-    return { valid: false, error: 'Word cannot be empty' }
+    return { valid: false, error: 'Word or phrase cannot be empty' }
   }
   
-  if (trimmed.length > 64) {
-    return { valid: false, error: 'Word must be 64 characters or less' }
+  // Increased limit to accommodate phrases and expressions
+  if (trimmed.length > 200) {
+    return { valid: false, error: 'Word or phrase must be 200 characters or less' }
   }
   
-  // Reject spaces (no phrases)
-  if (/\s/.test(trimmed)) {
-    return { valid: false, error: 'Word cannot contain spaces' }
-  }
-  
-  // Allow letters, hyphen, apostrophe
-  if (!/^[a-zA-Z'-]+$/.test(trimmed)) {
-    return { valid: false, error: 'Word can only contain letters, hyphens, and apostrophes' }
+  // Allow letters, spaces, hyphens, apostrophes, and common punctuation for phrases
+  // This allows for expressions in multiple languages
+  if (!/^[\p{L}\p{N}\s'-.,!?;:()]+$/u.test(trimmed)) {
+    return { valid: false, error: 'Word or phrase contains invalid characters' }
   }
   
   return { valid: true }
@@ -64,7 +80,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json()
-    const { word, tags, deck, note_type } = body
+    const { word, tags, deck, note_type, language } = body
 
     // Validate word
     const validation = validateWord(word)
@@ -75,10 +91,20 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Validate language
+    const finalLanguage = language || DEFAULT_LANGUAGE
+    if (!/^[a-z]{2}(-[A-Z]{2})?$/.test(finalLanguage)) {
+      return NextResponse.json(
+        { error: 'Invalid language code. Use ISO 639-1 format (e.g., en, fr, es)' },
+        { status: 400 }
+      )
+    }
+
     const normalizedWord = normalizeWord(word)
     const finalDeck = deck || DEFAULT_DECK
     const finalNoteType = note_type || DEFAULT_NOTE_TYPE
-    const finalTags = [...REQUIRED_TAGS, ...(tags || [])]
+    const requiredTags = getRequiredTags(finalLanguage)
+    const finalTags = [...requiredTags, ...(tags || [])]
 
     // Check for existing row
     const { data: existing, error: checkError } = await supabase
@@ -101,15 +127,18 @@ export async function POST(request: NextRequest) {
     }
 
     // Attempt to fetch definition
-    const { definition, error: definitionError } = await getWordDefinition(word)
+    const { definition, error: definitionError } = await getWordDefinition(word, finalLanguage)
 
     // Insert into database
+    // Note: normalized_word is set automatically by the database trigger,
+    // but we include it here for clarity and to ensure it matches our normalization
     const { data: inserted, error: insertError } = await supabase
       .from('anki_queue')
       .insert({
         word: word.trim(),
-        normalized_word: normalizedWord,
+        normalized_word: normalizedWord, // Will be overridden by trigger, but included for consistency
         definition,
+        language: finalLanguage,
         tags: finalTags,
         deck: finalDeck,
         note_type: finalNoteType,
@@ -120,6 +149,13 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (insertError) {
+      console.error('Database insert error:', {
+        code: insertError.code,
+        message: insertError.message,
+        details: insertError.details,
+        hint: insertError.hint,
+      })
+
       // Check if it's a unique constraint violation (race condition)
       if (insertError.code === '23505') {
         // Fetch the existing row
@@ -143,20 +179,53 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // Provide more detailed error information
+      const errorDetails: any = {
+        message: insertError.message,
+        code: insertError.code,
+      }
+      
+      if (insertError.details) {
+        errorDetails.details = insertError.details
+      }
+      
+      if (insertError.hint) {
+        errorDetails.hint = insertError.hint
+      }
+
       return NextResponse.json(
-        { error: 'Failed to insert into database', details: insertError.message },
+        { 
+          error: 'Failed to insert into database', 
+          details: errorDetails,
+          troubleshooting: insertError.code === '42P01' 
+            ? 'Table "anki_queue" does not exist. Please run the Supabase migration.'
+            : insertError.code === '42501'
+            ? 'Permission denied. Check your SUPABASE_SERVICE_ROLE_KEY.'
+            : 'Check your Supabase connection and table schema.'
+        },
         { status: 500 }
       )
     }
 
-    return NextResponse.json({
-      status: 'queued',
+    // Return response with appropriate message based on definition status
+    const responseData = {
+      status: 'queued' as const,
       id: inserted.id,
       word: inserted.word,
       normalized_word: inserted.normalized_word,
       definition: inserted.definition,
       resolution_error: inserted.resolution_error,
-    })
+    }
+
+    // If definition failed, include a helpful message
+    if (!inserted.definition && inserted.resolution_error) {
+      return NextResponse.json({
+        ...responseData,
+        message: 'Word queued successfully, but definition could not be fetched. You can add a definition later or re-run the sync.',
+      })
+    }
+
+    return NextResponse.json(responseData)
   } catch (error) {
     console.error('Error in POST /api/queue:', error)
     return NextResponse.json(

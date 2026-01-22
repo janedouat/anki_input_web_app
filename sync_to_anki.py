@@ -26,7 +26,7 @@ load_dotenv()
 # Configuration
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
-OUTPUT_DIR = os.getenv('ANKI_IMPORT_DIR', os.path.expanduser('~/anki_imports'))
+OUTPUT_DIR = os.getenv('ANKI_IMPORT_DIR', os.path.expanduser('~/Downloads'))
 
 REQUIRED_TAGS = ['dom_words', 'lang_en', 'time_permanent', 'type_definition']
 DEFAULT_DECK = 'Main'
@@ -249,7 +249,7 @@ Examples:
     )
     parser.add_argument('--limit', type=int, help='Limit number of items to process')
     parser.add_argument('--dry-run', action='store_true', help='Dry run mode (no changes)')
-    parser.add_argument('--output', type=str, help='Output CSV file path (default: ~/anki_imports/anki_import_TIMESTAMP.csv)')
+    parser.add_argument('--output', type=str, help='Output CSV file path (default: ~/Downloads/anki_import_TIMESTAMP.csv)')
     
     args = parser.parse_args()
     

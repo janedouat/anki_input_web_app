@@ -1,0 +1,11 @@
+{
+  "name": "Add word to Anki",
+  "short_name": "Anki Words",
+  "description": "Queue words for Anki flashcards",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0070f3",
+  "icons": []
+}
+

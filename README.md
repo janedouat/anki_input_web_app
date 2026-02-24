@@ -1,12 +1,15 @@
 # Anki Word Input Web App
 
-A phone-first web app that lets you queue English words for Anki flashcards. Words are stored in the cloud and automatically synced to your local Anki collection when you run the sync agent on your computer.
+A phone-first web app that lets you queue words and phrases for Anki flashcards. Definitions are fetched automatically, and notes are tagged with `dom_words`, `lang_en`, `time_permanent`, and `type_definition` so you can build definition decks by filtering your main deck. Words are stored in the cloud and synced to your computer when you run the sync agent, which generates a CSV file. Because Anki has no public API, you import that CSV into Anki manually (File → Import).
 
-## Written by Jane for Jane
+![Add word or phrase screenshot](assets/app-screenshot.png)
 
-Web app hosted on Vercel that stores inputed words/sayings and their definition fetched from openAI's API.
+## TLDR
+
+Web app hosted on Vercel that stores to a Supabase db inputed words/sayings and their definition fetched from openAI's API.
 These can be inputed to Anki by running `cd /Users/janedouat/Documents/PERSO/PROJECTS/anki_input_web_app && python3 sync_to_anki.py`. Then this can be imported to Anki using the **import** feature.
 Dry run to see what would be exported is `cd /Users/janedouat/Documents/PERSO/PROJECTS/anki_input_web_app && python3 sync_to_anki.py --dry-run`.
+
 
 ## Architecture
 
@@ -147,6 +150,8 @@ Mobile Browser → Next.js API (Vercel) → Supabase Postgres
 4. The word is queued with its definition fetched automatically
 
 ### Syncing to Anki
+
+Anki does not provide a public API, so the sync agent only produces a CSV file. You then import that file into Anki yourself (File → Import).
 
 1. Run the sync agent to generate an import file:
    ```bash

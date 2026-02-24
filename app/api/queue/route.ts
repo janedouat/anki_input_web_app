@@ -105,6 +105,9 @@ export async function POST(request: NextRequest) {
     const finalNoteType = note_type || DEFAULT_NOTE_TYPE
     const requiredTags = getRequiredTags(finalLanguage)
     const finalTags = [...requiredTags, ...(tags || [])]
+    
+    // Log for debugging - verify language tag is set correctly
+    console.log(`Language: ${finalLanguage}, Tags: ${finalTags.join(', ')}`)
 
     // Check for existing row
     const { data: existing, error: checkError } = await supabase
@@ -123,6 +126,8 @@ export async function POST(request: NextRequest) {
         normalized_word: existing.normalized_word,
         definition: existing.definition,
         resolution_error: existing.resolution_error,
+        language: existing.language,
+        tags: existing.tags,
       })
     }
 
@@ -215,6 +220,8 @@ export async function POST(request: NextRequest) {
       normalized_word: inserted.normalized_word,
       definition: inserted.definition,
       resolution_error: inserted.resolution_error,
+      language: inserted.language,
+      tags: inserted.tags, // Includes the language tag (lang_en, lang_fr, etc.)
     }
 
     // If definition failed, include a helpful message

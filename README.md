@@ -2,7 +2,7 @@
 
 A phone-first web app that lets you queue words and phrases for Anki flashcards. Definitions are fetched automatically, and notes are tagged with `dom_words`, `lang_en`, `time_permanent`, and `type_definition` so you can build definition decks by filtering your main deck. Words are stored in the cloud and synced to your computer when you run the sync agent, which generates a CSV file. Because Anki has no public API, you import that CSV into Anki manually (File → Import).
 
-![Add word or phrase screenshot](assets/app-screenshot.png)
+<img src="assets/app-screenshot.png" alt="Add word or phrase screenshot" width="200" />
 
 ## TLDR
 
